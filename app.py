@@ -1,45 +1,43 @@
 from dotenv import load_dotenv
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
+from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+import os
 
 load_dotenv()
 
-# --- 1. DOCUMENTS (your "knowledge base") ---
-# In a real app these come from PDFs, websites, databases etc.
-documents = [
-    "React is a JavaScript frontend library for building user interfaces.",
-    "Python is a programming language widely used for AI and data science.",
-    "LangChain is a framework for building LLM-powered applications.",
-    "ChromaDB is a vector database used to store and search embeddings.",
-]
+DOCS_DIR = "docs"
+CHROMA_DIR = "chroma_db"
 
-# --- 2. EMBEDDINGS ---
-# Converts text into a vector of 768 numbers representing semantic meaning.
-# "React library" and "frontend framework" will have similar vectors.
-embeddings = HuggingFaceEmbeddings()  # runs locally, no API key needed
+embeddings = HuggingFaceEmbeddings()
 
-# Uncomment to inspect raw embeddings:
-vec = embeddings.embed_query("React")
-print(f"Dims: {len(vec)}, Sample: {vec[:5]}")
+# --- PERSISTENT CHROMADB ---
+# If chroma_db/ exists, load it. Otherwise, build it from docs and save.
+if os.path.exists(CHROMA_DIR):
+    print("Loading existing vector store...")
+    db = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
+else:
+    print("Building vector store from docs...")
 
-# --- 3. VECTOR STORE ---
-# Stores embedded documents. similarity_search uses cosine similarity.
-db = Chroma.from_texts(documents, embeddings)
+    # Load all .txt files from docs/
+    loader = DirectoryLoader(DOCS_DIR, glob="**/*.txt", loader_cls=TextLoader)
+    docs = loader.load()
 
-# See what's stored in ChromaDB
-collection = db._collection.get(include=["embeddings", "documents"])
-print(f"\nStored docs: {collection['documents']}")
-print(f"Embedding shape: {len(collection['embeddings'][0])} dims")
+    # Chunk each doc into pieces of 500 chars, with 50 char overlap between chunks
+    # Overlap ensures a sentence split across two chunks isn't lost
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+    chunks = splitter.split_documents(docs)
 
-# --- 4. LLM ---
-# gpt-4o-mini is cheap and capable. gpt-3.5-turbo also works here.
+    print(f"Loaded {len(docs)} docs → split into {len(chunks)} chunks")
+
+    db = Chroma.from_documents(chunks, embeddings, persist_directory=CHROMA_DIR)
+    print("Vector store saved to chroma_db/")
+
 llm = ChatOpenAI(model="gpt-4o-mini")
 
-# --- 5. PROMPT TEMPLATE ---
-# Separating prompt from code is best practice.
-# The LLM is instructed to only use the provided context.
 prompt = ChatPromptTemplate.from_template("""
 You are a helpful assistant. Answer the question using ONLY the context below.
 If the answer is not in the context, say "I don't know based on the provided context."
@@ -49,8 +47,6 @@ Context: {context}
 Question: {question}
 """)
 
-# --- 6. CHAIN (LCEL) ---
-# prompt | llm pipes the formatted prompt directly into the LLM.
 chain = prompt | llm
 
 while True:
@@ -58,13 +54,19 @@ while True:
     if query.lower() == "exit":
         break
 
-    # similarity_search_with_score returns (doc, score) — lower = more similar
-    results = db.similarity_search_with_score(query, k=2)
+    results = db.similarity_search_with_score(query, k=3)
 
     print("\n[Retrieved chunks]")
     for doc, score in results:
-        print(f"  score={score:.4f} | {doc.page_content}")
+        source = os.path.basename(doc.metadata.get("source", "unknown"))
+        print(f"  score={score:.4f} | {source} | {doc.page_content[:80]}...")
 
-    context = "\n".join([doc.page_content for doc, _ in results])
+    relevant = [doc for doc, score in results if score < 1.0]
+
+    if not relevant:
+        print("\nAnswer: I don't know based on the provided context.")
+        continue
+
+    context = "\n".join([doc.page_content for doc in relevant])
     response = chain.invoke({"context": context, "question": query})
     print("\nAnswer:", response.content)
