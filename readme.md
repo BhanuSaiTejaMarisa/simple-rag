@@ -87,15 +87,15 @@ To add new documents, drop `.txt` files into `docs/`, delete `chroma_db/`, and r
 
 ## Roadmap
 
-**Current: Level 2 — Real documents**
+**Level 2 — Real documents**
 - [x] Load from txt files
 - [x] Text chunking with overlap
 - [x] Persistent ChromaDB
 
-**Level 3 — Better retrieval**
-- [ ] Metadata filtering by filename/topic
-- [ ] MMR (Maximal Marginal Relevance) — avoid redundant chunks
-- [ ] Hybrid search — keyword + vector combined
+**Current: Level 3 — Better retrieval**
+- [x] Metadata filtering by filename/topic
+- [x] MMR (Maximal Marginal Relevance) — avoid redundant chunks
+- [x] Hybrid search — keyword + vector combined
 
 **Level 4 — Better generation**
 - [ ] Conversation memory across questions
