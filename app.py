@@ -1,6 +1,8 @@
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
+from langchain_community.retrievers import BM25Retriever
+from langchain_classic.retrievers import EnsembleRetriever
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -14,27 +16,31 @@ CHROMA_DIR = "chroma_db"
 
 embeddings = HuggingFaceEmbeddings()
 
+# chunks need to be in memory for BM25 — load them regardless
+loader = DirectoryLoader(DOCS_DIR, glob="**/*.txt", loader_cls=TextLoader)
+docs = loader.load()
+splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+chunks = splitter.split_documents(docs)
+
 # --- PERSISTENT CHROMADB ---
-# If chroma_db/ exists, load it. Otherwise, build it from docs and save.
 if os.path.exists(CHROMA_DIR):
     print("Loading existing vector store...")
     db = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
 else:
-    print("Building vector store from docs...")
-
-    # Load all .txt files from docs/
-    loader = DirectoryLoader(DOCS_DIR, glob="**/*.txt", loader_cls=TextLoader)
-    docs = loader.load()
-
-    # Chunk each doc into pieces of 500 chars, with 100 char overlap between chunks
-    # Overlap ensures a sentence split across two chunks isn't lost
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
-    chunks = splitter.split_documents(docs)
-
-    print(f"Loaded {len(docs)} docs → split into {len(chunks)} chunks")
-
+    print(f"Building vector store from docs... ({len(chunks)} chunks)")
     db = Chroma.from_documents(chunks, embeddings, persist_directory=CHROMA_DIR)
     print("Vector store saved to chroma_db/")
+
+# --- HYBRID RETRIEVER ---
+# BM25: keyword search over raw chunks
+# ChromaDB: semantic/vector search
+# EnsembleRetriever merges both, weights control how much each contributes
+bm25_retriever = BM25Retriever.from_documents(chunks, k=3)
+vector_retriever = db.as_retriever(search_type="mmr", search_kwargs={"k": 3, "fetch_k": 10})
+retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, vector_retriever],
+    weights=[0.5, 0.5]
+)
 
 llm = ChatOpenAI(model="gpt-4o-mini")
 
@@ -54,8 +60,8 @@ while True:
     if query.lower() == "exit":
         break
 
-    # MMR: fetch 10 candidates, return 3 most relevant AND diverse
-    relevant = db.max_marginal_relevance_search(query, k=3, fetch_k=10)
+    # hybrid search: BM25 (keyword) + MMR vector search, merged
+    relevant = retriever.invoke(query)
 
     if not relevant:
         print("\nAnswer: I don't know based on the provided context.")
