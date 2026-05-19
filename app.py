@@ -48,6 +48,7 @@ llm = ChatOpenAI(model="gpt-4o-mini")
 prompt = ChatPromptTemplate.from_messages([
     ("system", """You are a helpful assistant. Answer the question using ONLY the context below.
 If the answer is not in the context, say "I don't know based on the provided context."
+If you use information from the context, end your answer with 'Source: <filename>' citing only the file you actually used.
 
 Context: {context}"""),
     MessagesPlaceholder(variable_name="history"),
@@ -94,11 +95,14 @@ while True:
         source = os.path.basename(doc.metadata.get("source", "unknown"))
         print(f"  {source} | {doc.page_content[:80]}...")
 
-    context = "\n".join([doc.page_content for doc in relevant])
+    # build context with source labels so LLM can cite them
+    context = "\n\n".join([
+        f"[{os.path.basename(doc.metadata.get('source', 'unknown'))}]\n{doc.page_content}"
+        for doc in relevant
+    ])
     response = chain.invoke({"context": context, "question": query, "history": history})
     print("\nAnswer:", response.content)
 
-    # only store turns where the LLM actually had a useful answer
     if "don't know" not in response.content.lower():
         history.append(HumanMessage(content=query))
         history.append(AIMessage(content=response.content))
