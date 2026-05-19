@@ -5,7 +5,8 @@ from langchain_community.retrievers import BM25Retriever
 from langchain_classic.retrievers import EnsembleRetriever
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import os
 
@@ -44,16 +45,19 @@ retriever = EnsembleRetriever(
 
 llm = ChatOpenAI(model="gpt-4o-mini")
 
-prompt = ChatPromptTemplate.from_template("""
-You are a helpful assistant. Answer the question using ONLY the context below.
+prompt = ChatPromptTemplate.from_messages([
+    ("system", """You are a helpful assistant. Answer the question using ONLY the context below.
 If the answer is not in the context, say "I don't know based on the provided context."
 
-Context: {context}
-
-Question: {question}
-""")
+Context: {context}"""),
+    MessagesPlaceholder(variable_name="history"),
+    ("human", "{question}"),
+])
 
 chain = prompt | llm
+
+# conversation history for this session
+history = []
 
 while True:
     query = input("\nAsk (or 'exit'): ").strip()
@@ -91,5 +95,10 @@ while True:
         print(f"  {source} | {doc.page_content[:80]}...")
 
     context = "\n".join([doc.page_content for doc in relevant])
-    response = chain.invoke({"context": context, "question": query})
+    response = chain.invoke({"context": context, "question": query, "history": history})
     print("\nAnswer:", response.content)
+
+    # only store turns where the LLM actually had a useful answer
+    if "don't know" not in response.content.lower():
+        history.append(HumanMessage(content=query))
+        history.append(AIMessage(content=response.content))
