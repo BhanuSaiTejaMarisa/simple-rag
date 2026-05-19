@@ -26,7 +26,7 @@ else:
     loader = DirectoryLoader(DOCS_DIR, glob="**/*.txt", loader_cls=TextLoader)
     docs = loader.load()
 
-    # Chunk each doc into pieces of 500 chars, with 50 char overlap between chunks
+    # Chunk each doc into pieces of 500 chars, with 100 char overlap between chunks
     # Overlap ensures a sentence split across two chunks isn't lost
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
     chunks = splitter.split_documents(docs)
@@ -54,18 +54,17 @@ while True:
     if query.lower() == "exit":
         break
 
-    results = db.similarity_search_with_score(query, k=3)
-
-    print("\n[Retrieved chunks]")
-    for doc, score in results:
-        source = os.path.basename(doc.metadata.get("source", "unknown"))
-        print(f"  score={score:.4f} | {source} | {doc.page_content[:80]}...")
-
-    relevant = [doc for doc, score in results if score < 1.0]
+    # MMR: fetch 10 candidates, return 3 most relevant AND diverse
+    relevant = db.max_marginal_relevance_search(query, k=3, fetch_k=10)
 
     if not relevant:
         print("\nAnswer: I don't know based on the provided context.")
         continue
+
+    print("\n[Retrieved chunks]")
+    for doc in relevant:
+        source = os.path.basename(doc.metadata.get("source", "unknown"))
+        print(f"  {source} | {doc.page_content[:80]}...")
 
     context = "\n".join([doc.page_content for doc in relevant])
     response = chain.invoke({"context": context, "question": query})
