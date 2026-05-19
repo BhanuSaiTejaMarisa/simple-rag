@@ -100,9 +100,13 @@ while True:
         f"[{os.path.basename(doc.metadata.get('source', 'unknown'))}]\n{doc.page_content}"
         for doc in relevant
     ])
-    response = chain.invoke({"context": context, "question": query, "history": history})
-    print("\nAnswer:", response.content)
+    print("\nAnswer: ", end="", flush=True)
+    full_response = ""
+    for chunk in chain.stream({"context": context, "question": query, "history": history}):
+        print(chunk.content, end="", flush=True)
+        full_response += chunk.content
+    print()
 
-    if "don't know" not in response.content.lower():
+    if "don't know" not in full_response.lower():
         history.append(HumanMessage(content=query))
-        history.append(AIMessage(content=response.content))
+        history.append(AIMessage(content=full_response))
