@@ -92,15 +92,15 @@ To add new documents, drop `.txt` files into `docs/`, delete `chroma_db/`, and r
 - [x] Text chunking with overlap
 - [x] Persistent ChromaDB
 
-**Current: Level 3 — Better retrieval**
+**Level 3 — Better retrieval**
 - [x] Metadata filtering by filename/topic
 - [x] MMR (Maximal Marginal Relevance) — avoid redundant chunks
 - [x] Hybrid search — keyword + vector combined
 
-**Level 4 — Better generation**
-- [ ] Conversation memory across questions
-- [ ] Source citations in answers
-- [ ] Streaming responses
+**Current: Level 4 — Better generation**
+- [x] Conversation memory across questions
+- [x] Source citations in answers
+- [x] Streaming responses
 
 **Level 5 — Production patterns**
 - [ ] Query rewriting
