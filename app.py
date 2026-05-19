@@ -60,8 +60,26 @@ while True:
     if query.lower() == "exit":
         break
 
-    # hybrid search: BM25 (keyword) + MMR vector search, merged
-    relevant = retriever.invoke(query)
+    # optional metadata filter: prefix query with [docname] e.g. [transformer] what is attention
+    # searches all docs if no prefix given
+    filter_source = None
+    if query.startswith("["):
+        end = query.find("]")
+        if end != -1:
+            filter_source = query[1:end].strip() + ".txt"
+            query = query[end+1:].strip()
+
+    if filter_source:
+        # scoped search: only vector search supports metadata filtering
+        scoped_retriever = db.as_retriever(
+            search_type="mmr",
+            search_kwargs={"k": 3, "fetch_k": 10, "filter": {"source": f"docs/{filter_source}"}}
+        )
+        relevant = scoped_retriever.invoke(query)
+        print(f"\n[Searching only: {filter_source}]")
+    else:
+        # full hybrid search across all docs
+        relevant = retriever.invoke(query)
 
     if not relevant:
         print("\nAnswer: I don't know based on the provided context.")
