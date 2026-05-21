@@ -12,7 +12,6 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, List
 import os
-import time
 import logging
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -62,19 +61,27 @@ retriever = ContextualCompressionRetriever(
 llm = ChatOpenAI(model="gpt-4o-mini")
 
 # --- AGENT STATE ---
-# this is the data that flows through every node in the graph
 class AgentState(TypedDict):
-    query: str                  # original user query
-    search_query: str           # current search query (may be rewritten)
-    chunks: List                # retrieved chunks
-    answer: str                 # final answer
-    history: List               # conversation history
-    retries: int                # how many times we've retried retrieval
+    query: str
+    search_query: str
+    filter_source: str | None
+    chunks: List
+    answer: str
+    history: List
+    retries: int
 
 # --- NODE 1: RETRIEVE ---
 def retrieve(state: AgentState) -> AgentState:
     print(f"\n[Retrieving]: {state['search_query']}")
-    results = retriever.invoke(state["search_query"])
+    if state.get("filter_source"):
+        scoped = db.as_retriever(
+            search_type="mmr",
+            search_kwargs={"k": 6, "fetch_k": 12, "filter": {"source": f"docs/{state['filter_source']}"}}
+        )
+        results = scoped.invoke(state["search_query"])
+        print(f"[Searching only: {state['filter_source']}]")
+    else:
+        results = retriever.invoke(state["search_query"])
     return {**state, "chunks": results}
 
 # --- NODE 2: GRADE CHUNKS ---
@@ -105,11 +112,15 @@ Do NOT answer the question.
 Do NOT add any information.
 Make it more specific and keyword-rich.
 Return ONLY the rewritten question, nothing else."""),
+    MessagesPlaceholder(variable_name="history"),
     ("human", "Rewrite for better retrieval: {question}"),
 ])
 
 def rewrite_query(state: AgentState) -> AgentState:
-    result = llm.invoke(rewrite_prompt.format_messages(question=state["search_query"]))
+    result = llm.invoke(rewrite_prompt.format_messages(
+        question=state["search_query"],
+        history=state["history"]
+    ))
     new_query = result.content.strip()
     print(f"[Rewritten]: {new_query}")
     return {**state, "search_query": new_query, "retries": state["retries"] + 1}
@@ -149,7 +160,6 @@ def generate(state: AgentState) -> AgentState:
     }):
         print(chunk.content, end="", flush=True)
         full_response += chunk.content
-        time.sleep(0.02)
     print()
 
     return {**state, "answer": full_response}
@@ -185,9 +195,29 @@ while True:
     if query.lower() == "exit":
         break
 
+    # optional metadata filter: [transformer] what is attention
+    filter_source = None
+    if query.startswith("["):
+        end = query.find("]")
+        if end != -1:
+            filter_source = query[1:end].strip() + ".txt"
+            query = query[end+1:].strip()
+
+    # rewrite query upfront if history exists (handles vague follow-ups)
+    search_query = query
+    if history:
+        rewritten = llm.invoke(rewrite_prompt.format_messages(
+            question=query,
+            history=history
+        ))
+        search_query = rewritten.content.strip()
+        if search_query != query:
+            print(f"[Rewritten query]: {search_query}")
+
     result = app.invoke({
         "query": query,
-        "search_query": query,
+        "search_query": search_query,
+        "filter_source": filter_source,
         "chunks": [],
         "answer": "",
         "history": history,
