@@ -2,13 +2,18 @@ from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_community.retrievers import BM25Retriever
-from langchain_classic.retrievers import EnsembleRetriever
+from langchain_community.document_compressors.flashrank_rerank import FlashrankRerank
+from langchain_classic.retrievers import EnsembleRetriever, ContextualCompressionRetriever
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import os
+import time
+import logging
+
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 load_dotenv()
 
@@ -36,11 +41,20 @@ else:
 # BM25: keyword search over raw chunks
 # ChromaDB: semantic/vector search
 # EnsembleRetriever merges both, weights control how much each contributes
-bm25_retriever = BM25Retriever.from_documents(chunks, k=3)
-vector_retriever = db.as_retriever(search_type="mmr", search_kwargs={"k": 3, "fetch_k": 10})
-retriever = EnsembleRetriever(
+bm25_retriever = BM25Retriever.from_documents(chunks, k=6)
+vector_retriever = db.as_retriever(search_type="mmr", search_kwargs={"k": 6, "fetch_k": 12})
+base_retriever = EnsembleRetriever(
     retrievers=[bm25_retriever, vector_retriever],
     weights=[0.5, 0.5]
+)
+
+# --- RE-RANKER ---
+# retrieves more candidates (k=6) then re-ranks and keeps top 3
+# FlashrankRerank runs locally, no API key needed
+reranker = FlashrankRerank(top_n=5)
+retriever = ContextualCompressionRetriever(
+    base_compressor=reranker,
+    base_retriever=base_retriever
 )
 
 llm = ChatOpenAI(model="gpt-4o-mini")

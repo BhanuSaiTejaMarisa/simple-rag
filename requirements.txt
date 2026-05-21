@@ -3,6 +3,7 @@ langchain-community
 langchain-chroma
 langchain-classic
 rank_bm25
+flashrank
 langchain-huggingface
 langchain-openai
 langchain-core
