@@ -97,12 +97,12 @@ To add new documents, drop `.txt` files into `docs/`, delete `chroma_db/`, and r
 - [x] MMR (Maximal Marginal Relevance) — avoid redundant chunks
 - [x] Hybrid search — keyword + vector combined
 
-**Current: Level 4 — Better generation**
+**Level 4 — Better generation**
 - [x] Conversation memory across questions
 - [x] Source citations in answers
 - [x] Streaming responses
 
-**Level 5 — Production patterns**
-- [ ] Query rewriting
-- [ ] Re-ranking with a second model
-- [ ] Agentic RAG
+**Current: Level 5 — Production patterns**
+- [x] Query rewriting
+- [x] Re-ranking with a second model
+- [x] Agentic RAG
