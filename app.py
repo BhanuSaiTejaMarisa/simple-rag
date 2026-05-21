@@ -9,6 +9,8 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langgraph.graph import StateGraph, END
+from typing import TypedDict, List
 import os
 import time
 import logging
@@ -59,20 +61,61 @@ retriever = ContextualCompressionRetriever(
 
 llm = ChatOpenAI(model="gpt-4o-mini")
 
-# --- QUERY REWRITER ---
-# rewrites vague follow-up queries into standalone questions using conversation history
-# only rewrites if there is history, otherwise uses the query as-is
+# --- AGENT STATE ---
+# this is the data that flows through every node in the graph
+class AgentState(TypedDict):
+    query: str                  # original user query
+    search_query: str           # current search query (may be rewritten)
+    chunks: List                # retrieved chunks
+    answer: str                 # final answer
+    history: List               # conversation history
+    retries: int                # how many times we've retried retrieval
+
+# --- NODE 1: RETRIEVE ---
+def retrieve(state: AgentState) -> AgentState:
+    print(f"\n[Retrieving]: {state['search_query']}")
+    results = retriever.invoke(state["search_query"])
+    return {**state, "chunks": results}
+
+# --- NODE 2: GRADE CHUNKS ---
+# LLM decides if retrieved chunks are relevant enough to answer the query
+grade_prompt = ChatPromptTemplate.from_template("""Are these chunks relevant to answer the question?
+Question: {query}
+Chunks: {chunks}
+Reply with only 'yes' or 'no'.""")
+
+def grade_chunks(state: AgentState) -> str:
+    if not state["chunks"] or state["retries"] >= 2:
+        return "generate"  # give up retrying, attempt answer or say I don't know
+
+    chunk_text = "\n".join([c.page_content[:200] for c in state["chunks"]])
+    result = llm.invoke(grade_prompt.format(query=state["query"], chunks=chunk_text))
+
+    if "yes" in result.content.lower():
+        print("[Chunks graded]: relevant ✓")
+        return "generate"
+    else:
+        print("[Chunks graded]: not relevant, rewriting query...")
+        return "rewrite"
+
+# --- NODE 3: REWRITE QUERY ---
 rewrite_prompt = ChatPromptTemplate.from_messages([
-    ("system", """Your only job is to rewrite the follow-up question as a standalone question using the conversation history.
+    ("system", """Your only job is to rewrite the follow-up question as a standalone question using the conversation history to improve document retrieval.
 Do NOT answer the question.
 Do NOT add any information.
-Return ONLY the rewritten question as a single sentence ending with a question mark."""),
-    MessagesPlaceholder(variable_name="history"),
-    ("human", "Rewrite this as a standalone question: {question}"),
+Make it more specific and keyword-rich.
+Return ONLY the rewritten question, nothing else."""),
+    ("human", "Rewrite for better retrieval: {question}"),
 ])
-rewrite_chain = rewrite_prompt | llm
 
-prompt = ChatPromptTemplate.from_messages([
+def rewrite_query(state: AgentState) -> AgentState:
+    result = llm.invoke(rewrite_prompt.format_messages(question=state["search_query"]))
+    new_query = result.content.strip()
+    print(f"[Rewritten]: {new_query}")
+    return {**state, "search_query": new_query, "retries": state["retries"] + 1}
+
+# --- NODE 4: GENERATE ---
+answer_prompt = ChatPromptTemplate.from_messages([
     ("system", """You are a helpful assistant. Answer the question using ONLY the context below.
 If the answer is not in the context, say "I don't know based on the provided context."
 If you use information from the context, end your answer with 'Source: <filename>' citing only the file you actually used.
@@ -81,10 +124,60 @@ Context: {context}"""),
     MessagesPlaceholder(variable_name="history"),
     ("human", "{question}"),
 ])
+answer_chain = answer_prompt | llm
 
-chain = prompt | llm
+def generate(state: AgentState) -> AgentState:
+    if not state["chunks"]:
+        return {**state, "answer": "I don't know based on the provided context."}
 
-# conversation history for this session
+    context = "\n\n".join([
+        f"[{os.path.basename(c.metadata.get('source', 'unknown'))}]\n{c.page_content}"
+        for c in state["chunks"]
+    ])
+
+    print("\n[Retrieved chunks]")
+    for c in state["chunks"]:
+        src = os.path.basename(c.metadata.get("source", "unknown"))
+        print(f"  {src} | {c.page_content[:80]}...")
+
+    print("\nAnswer: ", end="", flush=True)
+    full_response = ""
+    for chunk in answer_chain.stream({
+        "context": context,
+        "question": state["query"],
+        "history": state["history"]
+    }):
+        print(chunk.content, end="", flush=True)
+        full_response += chunk.content
+        time.sleep(0.02)
+    print()
+
+    return {**state, "answer": full_response}
+
+# --- BUILD GRAPH ---
+graph = StateGraph(AgentState)
+
+graph.add_node("retrieve", retrieve)
+graph.add_node("rewrite", rewrite_query)
+graph.add_node("generate", generate)
+
+graph.set_entry_point("retrieve")
+
+# after retrieve → grade chunks → decide: generate or rewrite
+graph.add_conditional_edges("retrieve", grade_chunks, {
+    "generate": "generate",
+    "rewrite": "rewrite"
+})
+
+# after rewrite → retrieve again
+graph.add_edge("rewrite", "retrieve")
+
+# after generate → done
+graph.add_edge("generate", END)
+
+app = graph.compile()
+
+# --- MAIN LOOP ---
 history = []
 
 while True:
@@ -92,54 +185,15 @@ while True:
     if query.lower() == "exit":
         break
 
-    # optional metadata filter: prefix query with [docname] e.g. [transformer] what is attention
-    # searches all docs if no prefix given
-    filter_source = None
-    if query.startswith("["):
-        end = query.find("]")
-        if end != -1:
-            filter_source = query[1:end].strip() + ".txt"
-            query = query[end+1:].strip()
+    result = app.invoke({
+        "query": query,
+        "search_query": query,
+        "chunks": [],
+        "answer": "",
+        "history": history,
+        "retries": 0
+    })
 
-    # rewrite vague queries using history, skip if no history yet
-    search_query = query
-    if history:
-        rewritten = rewrite_chain.invoke({"question": query, "history": history})
-        search_query = rewritten.content.strip()
-        if search_query != query:
-            print(f"\n[Rewritten query]: {search_query}")
-
-    if filter_source:
-        scoped_retriever = db.as_retriever(
-            search_type="mmr",
-            search_kwargs={"k": 3, "fetch_k": 10, "filter": {"source": f"docs/{filter_source}"}}
-        )
-        relevant = scoped_retriever.invoke(search_query)
-        print(f"[Searching only: {filter_source}]")
-    else:
-        relevant = retriever.invoke(search_query)
-
-    if not relevant:
-        print("\nAnswer: I don't know based on the provided context.")
-        continue
-
-    print("\n[Retrieved chunks]")
-    for doc in relevant:
-        source = os.path.basename(doc.metadata.get("source", "unknown"))
-        print(f"  {source} | {doc.page_content[:80]}...")
-
-    # build context with source labels so LLM can cite them
-    context = "\n\n".join([
-        f"[{os.path.basename(doc.metadata.get('source', 'unknown'))}]\n{doc.page_content}"
-        for doc in relevant
-    ])
-    print("\nAnswer: ", end="", flush=True)
-    full_response = ""
-    for chunk in chain.stream({"context": context, "question": query, "history": history}):
-        print(chunk.content, end="", flush=True)
-        full_response += chunk.content
-    print()
-
-    if "don't know" not in full_response.lower():
+    if "don't know" not in result["answer"].lower():
         history.append(HumanMessage(content=query))
-        history.append(AIMessage(content=full_response))
+        history.append(AIMessage(content=result["answer"]))
