@@ -45,6 +45,19 @@ retriever = EnsembleRetriever(
 
 llm = ChatOpenAI(model="gpt-4o-mini")
 
+# --- QUERY REWRITER ---
+# rewrites vague follow-up queries into standalone questions using conversation history
+# only rewrites if there is history, otherwise uses the query as-is
+rewrite_prompt = ChatPromptTemplate.from_messages([
+    ("system", """Your only job is to rewrite the follow-up question as a standalone question using the conversation history.
+Do NOT answer the question.
+Do NOT add any information.
+Return ONLY the rewritten question as a single sentence ending with a question mark."""),
+    MessagesPlaceholder(variable_name="history"),
+    ("human", "Rewrite this as a standalone question: {question}"),
+])
+rewrite_chain = rewrite_prompt | llm
+
 prompt = ChatPromptTemplate.from_messages([
     ("system", """You are a helpful assistant. Answer the question using ONLY the context below.
 If the answer is not in the context, say "I don't know based on the provided context."
@@ -74,17 +87,23 @@ while True:
             filter_source = query[1:end].strip() + ".txt"
             query = query[end+1:].strip()
 
+    # rewrite vague queries using history, skip if no history yet
+    search_query = query
+    if history:
+        rewritten = rewrite_chain.invoke({"question": query, "history": history})
+        search_query = rewritten.content.strip()
+        if search_query != query:
+            print(f"\n[Rewritten query]: {search_query}")
+
     if filter_source:
-        # scoped search: only vector search supports metadata filtering
         scoped_retriever = db.as_retriever(
             search_type="mmr",
             search_kwargs={"k": 3, "fetch_k": 10, "filter": {"source": f"docs/{filter_source}"}}
         )
-        relevant = scoped_retriever.invoke(query)
-        print(f"\n[Searching only: {filter_source}]")
+        relevant = scoped_retriever.invoke(search_query)
+        print(f"[Searching only: {filter_source}]")
     else:
-        # full hybrid search across all docs
-        relevant = retriever.invoke(query)
+        relevant = retriever.invoke(search_query)
 
     if not relevant:
         print("\nAnswer: I don't know based on the provided context.")
