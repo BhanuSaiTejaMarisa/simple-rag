@@ -21,15 +21,19 @@ User query → embed → similarity search → relevant chunks → LLM → answe
 1. **Documents** — `.txt` files in `docs/` are the knowledge base
 2. **Embeddings** — `HuggingFaceEmbeddings` (all-mpnet-base-v2) converts text into 768-dimensional vectors locally, no API needed
 3. **ChromaDB** — stores the vectors on disk, loaded on restart without re-embedding
-4. **Retrieval** — user query is embedded and compared against stored vectors using cosine similarity
-5. **Threshold filtering** — chunks with similarity score above `1.2` are discarded as irrelevant
-6. **Generation** — relevant chunks are passed to `gpt-4o-mini` with a strict prompt to answer only from context
+4. **Retrieval** — hybrid search combining BM25 (keyword) + MMR (semantic vector search)
+5. **Re-ranking** — FlashrankRerank re-scores retrieved chunks for better relevance
+6. **Agentic loop** — LangGraph agent grades chunks, rewrites query and retries if needed
+7. **Generation** — relevant chunks passed to `gpt-4o-mini`, answers only from context with source citations
 
 ## Project structure
 
 ```
 simple-rag/
-├── app.py                        # main application
+├── agent.py                      # RAG logic — LangGraph agentic pipeline
+├── api.py                        # FastAPI — exposes RAG as HTTP endpoints
+├── ui.py                         # Streamlit — chat UI, calls FastAPI
+├── scraper.py                    # downloads and cleans Wikipedia docs
 ├── docs/                         # knowledge base (txt files)
 │   ├── transformer.txt           # Wikipedia: Transformer architecture
 │   ├── large_language_model.txt  # Wikipedia: Large language models
@@ -57,12 +61,23 @@ Create a `.env` file:
 OPENAI_API_KEY=sk-...
 ```
 
-Run:
+Download and clean docs:
 ```bash
-python3 app.py
+python3 scraper.py
+```
+
+Run — requires two terminals:
+```bash
+# Terminal 1 — FastAPI backend
+uvicorn api:app --reload
+
+# Terminal 2 — Streamlit UI
+streamlit run ui.py
 ```
 
 First run builds the vector store (~30 seconds). Every run after loads instantly.
+
+Streamlit opens at `http://localhost:8501`. FastAPI docs at `http://localhost:8000/docs`.
 
 To add new documents, drop `.txt` files into `docs/`, delete `chroma_db/`, and rerun.
 

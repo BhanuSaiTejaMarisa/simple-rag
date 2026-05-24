@@ -4,6 +4,9 @@ langchain-chroma
 langchain-classic
 rank_bm25
 langgraph
+fastapi
+uvicorn
+streamlit
 flashrank
 langchain-huggingface
 langchain-openai

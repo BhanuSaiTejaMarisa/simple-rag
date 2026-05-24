@@ -146,21 +146,13 @@ def generate(state: AgentState) -> AgentState:
         for c in state["chunks"]
     ])
 
-    print("\n[Retrieved chunks]")
-    for c in state["chunks"]:
-        src = os.path.basename(c.metadata.get("source", "unknown"))
-        print(f"  {src} | {c.page_content[:80]}...")
-
-    print("\nAnswer: ", end="", flush=True)
     full_response = ""
     for chunk in answer_chain.stream({
         "context": context,
         "question": state["query"],
         "history": state["history"]
     }):
-        print(chunk.content, end="", flush=True)
         full_response += chunk.content
-    print()
 
     return {**state, "answer": full_response}
 
@@ -187,23 +179,17 @@ graph.add_edge("generate", END)
 
 app = graph.compile()
 
-# --- MAIN LOOP ---
-history = []
-
-while True:
-    query = input("\nAsk (or 'exit'): ").strip()
-    if query.lower() == "exit":
-        break
+def ask(query: str, history: list, filter_source: str | None = None) -> dict:
+    """Main entry point. Returns answer and updated history."""
 
     # optional metadata filter: [transformer] what is attention
-    filter_source = None
     if query.startswith("["):
         end = query.find("]")
         if end != -1:
             filter_source = query[1:end].strip() + ".txt"
             query = query[end+1:].strip()
 
-    # rewrite query upfront if history exists (handles vague follow-ups)
+    # rewrite query upfront if history exists
     search_query = query
     if history:
         rewritten = llm.invoke(rewrite_prompt.format_messages(
@@ -211,8 +197,6 @@ while True:
             history=history
         ))
         search_query = rewritten.content.strip()
-        if search_query != query:
-            print(f"[Rewritten query]: {search_query}")
 
     result = app.invoke({
         "query": query,
@@ -224,6 +208,15 @@ while True:
         "retries": 0
     })
 
-    if "don't know" not in result["answer"].lower():
-        history.append(HumanMessage(content=query))
-        history.append(AIMessage(content=result["answer"]))
+    answer = result["answer"]
+    sources = list(dict.fromkeys([
+        os.path.basename(c.metadata.get("source", "unknown"))
+        for c in result["chunks"]
+    ]))
+
+    updated_history = history.copy()
+    if "don't know" not in answer.lower():
+        updated_history.append(HumanMessage(content=query))
+        updated_history.append(AIMessage(content=answer))
+
+    return {"answer": answer, "sources": sources, "history": updated_history}
