@@ -1,9 +1,16 @@
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from agent import ask
 from langchain_core.messages import HumanMessage, AIMessage
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # agent.py imports trigger model loading and ChromaDB build on startup
+    print("RAG agent ready")
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 # --- REQUEST / RESPONSE MODELS ---
 class Message(BaseModel):
