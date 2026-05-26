@@ -1,46 +1,34 @@
 import streamlit as st
-import requests
-import os
-
-API_URL = os.getenv("API_URL", "http://localhost:8000")
+from agent import ask
+from langchain_core.messages import HumanMessage, AIMessage
 
 st.title("Simple RAG")
 st.caption("Ask questions about Transformers, LLMs, and Cognitive Psychology")
 
-# session state holds chat history between reruns
 if "messages" not in st.session_state:
-    st.session_state.messages = []      # display messages (role + content)
-if "api_history" not in st.session_state:
-    st.session_state.api_history = []   # serialized history sent to API
+    st.session_state.messages = []
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-# display existing chat messages
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# chat input
 query = st.chat_input("Ask something...")
 
 if query:
-    # show user message immediately
     with st.chat_message("user"):
         st.write(query)
     st.session_state.messages.append({"role": "user", "content": query})
 
-    # call FastAPI
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            response = requests.post(f"{API_URL}/ask", json={
-                "query": query,
-                "history": st.session_state.api_history
-            })
-            data = response.json()
+            result = ask(query=query, history=st.session_state.history)
 
-        st.write(data["answer"])
+        st.write(result["answer"])
 
-    # update state
     st.session_state.messages.append({
         "role": "assistant",
-        "content": data["answer"],
+        "content": result["answer"]
     })
-    st.session_state.api_history = data["history"]
+    st.session_state.history = result["history"]

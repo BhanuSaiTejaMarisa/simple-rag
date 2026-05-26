@@ -1,3 +1,14 @@
+---
+title: Simple RAG
+emoji: 🔍
+colorFrom: blue
+colorTo: purple
+sdk: streamlit
+sdk_version: 1.45.0
+app_file: app.py
+pinned: false
+---
+
 # Simple RAG
 
 A learning project to understand and build a Retrieval Augmented Generation (RAG) pipeline from scratch, progressively adding complexity.
