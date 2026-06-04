@@ -24,9 +24,14 @@ if query:
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             result = ask(query=query, history=st.session_state.history)
+<<<<<<< Updated upstream
 
         st.write(result["answer"])
 
+=======
+        st.write(result["answer"])
+
+>>>>>>> Stashed changes
     st.session_state.messages.append({
         "role": "assistant",
         "content": result["answer"]
