@@ -1,6 +1,11 @@
 import streamlit as st
-from agent import ask
-from langchain_core.messages import HumanMessage, AIMessage
+
+@st.cache_resource
+def load_agent():
+    from agent import ask
+    return ask
+
+ask = load_agent()
 
 st.title("Simple RAG")
 st.caption("Ask questions about Transformers, LLMs, and Cognitive Psychology")
