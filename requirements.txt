@@ -7,7 +7,6 @@ langgraph
 fastapi
 uvicorn
 streamlit
-flashrank
 langchain-huggingface
 langchain-openai
 langchain-core

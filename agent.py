@@ -2,8 +2,7 @@ from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_community.retrievers import BM25Retriever
-from langchain_community.document_compressors.flashrank_rerank import FlashrankRerank
-from langchain_classic.retrievers import EnsembleRetriever, ContextualCompressionRetriever
+from langchain_classic.retrievers import EnsembleRetriever
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -21,7 +20,7 @@ load_dotenv()
 DOCS_DIR = "docs"
 CHROMA_DIR = "chroma_db"
 
-embeddings = HuggingFaceEmbeddings()
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 # chunks need to be in memory for BM25 — load them regardless
 loader = DirectoryLoader(DOCS_DIR, glob="**/*.txt", loader_cls=TextLoader)
@@ -44,18 +43,9 @@ else:
 # EnsembleRetriever merges both, weights control how much each contributes
 bm25_retriever = BM25Retriever.from_documents(chunks, k=6)
 vector_retriever = db.as_retriever(search_type="mmr", search_kwargs={"k": 6, "fetch_k": 12})
-base_retriever = EnsembleRetriever(
+retriever = EnsembleRetriever(
     retrievers=[bm25_retriever, vector_retriever],
     weights=[0.5, 0.5]
-)
-
-# --- RE-RANKER ---
-# retrieves more candidates (k=6) then re-ranks and keeps top 3
-# FlashrankRerank runs locally, no API key needed
-reranker = FlashrankRerank(top_n=5)
-retriever = ContextualCompressionRetriever(
-    base_compressor=reranker,
-    base_retriever=base_retriever
 )
 
 llm = ChatOpenAI(model="gpt-4o-mini")
