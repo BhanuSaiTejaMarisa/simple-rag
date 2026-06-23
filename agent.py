@@ -209,4 +209,4 @@ def ask(query: str, history: list, filter_source: str | None = None) -> dict:
         updated_history.append(HumanMessage(content=query))
         updated_history.append(AIMessage(content=answer))
 
-    return {"answer": answer, "sources": sources, "history": updated_history}
+    return {"answer": answer, "sources": sources, "history": updated_history, "raw_chunks": result["chunks"]}
